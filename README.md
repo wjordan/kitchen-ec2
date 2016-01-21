@@ -198,6 +198,22 @@ image_search:
   name: Windows_Server-2012-R2_RTM-English-64Bit-Base-*
 ```
 
+**Note** - For Ubuntu platforms, AMI selection is specially handled using the [`ubuntu_ami`](https://github.com/jtimberman/ubuntu_ami) gem
+to select the correct AMI based on Ubuntu's officially-maintained release list. You can also specify additional `image_search` options to
+customize the query. For example, to select the latest hvm ebs-SSD (gp2) Ubuntu 14.04 image, specify:
+
+```yaml
+platforms:
+  - name: ubuntu-14.04
+driver:
+  name: ec2
+  image_search:
+    virtualization-type: hvm
+    root-device-type: ebs
+    block-device-mapping.volume-type: gp2
+```
+
+
 ### region
 
 **Required** The AWS [region][region_docs] to use.

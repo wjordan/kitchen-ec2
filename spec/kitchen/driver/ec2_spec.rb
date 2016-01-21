@@ -472,13 +472,37 @@ describe Kitchen::Driver::Ec2 do
       let(:ami_data) { %w[ ami-1305ef78 instance-store amd64 us-east-1 paravirtual ] }
 
       it "queries an ami_id" do
-        expect(driver).to receive(:ubuntu_ami).with(config[:region], platform.name). \
+        expect(driver).to receive(:ubuntu_ami).with(config[:region], nil, platform.name). \
           and_return(Ubuntu::Ami.new(*ami_data))
         expect(driver.default_ami).to eq(ami_data[0])
       end
     end
 
-    context "when ami_search is provided" do
+    context "when platform is ubuntu and image_search is provided" do
+      let(:config) { {
+        :aws_ssh_key_id => "key",
+        :image_search => {
+          :"virtualization-type" => "hvm",
+          :"root-device-type" => "ebs",
+          :"block-device-mapping.volume-type" => "gp2"
+        }
+      } }
+      let(:platform) { Kitchen::Platform.new(:name => "ubuntu-14.04") }
+      let(:ami_data) { [
+        %w[ ami-1 instance-store amd64 us-east-1 paravirtual ],
+        %w[ ami-2 instance-store amd64 us-east-1 hvm ],
+        %w[ ami-3 ebs-io1 amd64 us-east-1 hvm ],
+        %w[ ami-4 ebs-ssd amd64 us-east-1 hvm ]
+      ]}
+
+      it "queries an ami_id" do
+        expect(Ubuntu).to receive_message_chain(:release, :amis). \
+          and_return(ami_data.map{|ami| Ubuntu::Ami.new(*ami)})
+        expect(driver.default_ami).to eq(ami_data.last[0])
+      end
+    end
+
+    context "when image_search is provided" do
       let(:config) { { :image_search => {} } }
       let(:ami_id) { "ami-xxxxxxxx" }
 

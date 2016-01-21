@@ -262,19 +262,33 @@ module Kitchen
         images.last && images.last.id
       end
 
-      def ubuntu_ami(region, platform_name)
+      def ubuntu_ami(region, search, platform_name)
+        search ||= {}
         release = amis["ubuntu_releases"][platform_name]
+        root_store = if search[:"root-device-type"] == "ebs"
+          case search[:"block-device-mapping.volume-type"]
+            when "gp2"
+              "ebs-ssd"
+            when "io1"
+              "ebs-io1"
+            else
+              "ebs"
+          end
+        else
+          "instance-store"
+        end
+        virtualization_type = search[:"virtualization-type"] || "paravirtual"
         Ubuntu.release(release).amis.find do |ami|
           ami.arch == "amd64" &&
-            ami.root_store == "instance-store" &&
+            ami.root_store == root_store &&
             ami.region == region &&
-            ami.virtualization_type == "paravirtual"
+            ami.virtualization_type == (virtualization_type)
         end
       end
 
       def default_ami
         if instance.platform.name.start_with?("ubuntu")
-          ami = ubuntu_ami(config[:region], instance.platform.name)
+          ami = ubuntu_ami(config[:region], config[:image_search], instance.platform.name)
           ami && ami.name
         elsif !config[:image_search].nil?
           lookup_ami(config[:image_search])
