@@ -273,7 +273,7 @@ module Kitchen
       end
 
       def default_ami
-        if instance.platform.name.start_with?("ubuntu")
+        if instance.platform.name.start_with?("ubuntu") && config[:image_search].nil?
           ami = ubuntu_ami(config[:region], instance.platform.name)
           ami && ami.name
         elsif !config[:image_search].nil?
