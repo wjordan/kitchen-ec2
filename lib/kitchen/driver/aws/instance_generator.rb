@@ -41,9 +41,6 @@ module Kitchen
         # can be passed in null, others need to be ommitted if they are null
         def ec2_instance_data # rubocop:disable Metrics/MethodLength, Metrics/AbcSize
           i = {
-            :placement => {
-              :availability_zone          => config[:availability_zone]
-            },
             :instance_type                => config[:instance_type],
             :ebs_optimized                => config[:ebs_optimized],
             :image_id                     => config[:image_id],
@@ -51,6 +48,7 @@ module Kitchen
             :subnet_id                    => config[:subnet_id],
             :private_ip_address           => config[:private_ip_address]
           }
+          i[:placement] = { :availability_zone => config[:availability_zone] } if config[:availability_zone]
           i[:block_device_mappings] = block_device_mappings unless block_device_mappings.empty?
           i[:security_group_ids] = Array(config[:security_group_ids]) if config[:security_group_ids]
           i[:user_data] = prepared_user_data if prepared_user_data

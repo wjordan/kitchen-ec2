@@ -22,8 +22,15 @@ require "kitchen"
 require_relative "ec2_version"
 require_relative "aws/client"
 require_relative "aws/instance_generator"
+require_relative "aws/platform"
+require_relative "aws/platform/centos"
+require_relative "aws/platform/debian"
+require_relative "aws/platform/el"
+require_relative "aws/platform/fedora"
+require_relative "aws/platform/freebsd"
+require_relative "aws/platform/ubuntu"
+require_relative "aws/platform/windows"
 require "aws-sdk-core/waiters/errors"
-require "ubuntu_ami"
 require "retryable"
 
 module Kitchen
@@ -39,7 +46,7 @@ module Kitchen
 
       plugin_version Kitchen::Driver::EC2_VERSION
 
-      default_config :region,             ENV["AWS_REGION"] || "us-east-1"
+      default_config :region,             ENV["AWS_REGION"]
       default_config :shared_credentials_profile, nil
       default_config :availability_zone,  nil
       default_config :flavor_id,          nil
@@ -57,20 +64,18 @@ module Kitchen
       default_config :price,              nil
       default_config :retryable_tries,    60
       default_config :retryable_sleep,    5
-      default_config :aws_access_key_id,  nil
+      default_config :aws_access_key_id,  ENV["AWS_ACCESS_KEY_ID"]
       default_config :aws_secret_access_key, nil
       default_config :aws_session_token,  nil
       default_config :aws_ssh_key_id,     ENV["AWS_SSH_KEY_ID"]
-      default_config :image_id do |driver|
-        driver.default_ami
-      end
-      default_config :username,            nil
+      default_config :image_id,           nil
+      default_config :image_search,       nil
+      default_config :username,           nil
       default_config :associate_public_ip, nil
       default_config :interface,           nil
       default_config :http_proxy,          ENV["HTTPS_PROXY"] || ENV["HTTP_PROXY"]
 
       required_config :aws_ssh_key_id
-      required_config :image_id
 
       def self.validation_warn(driver, old_key, new_key)
         driver.warn "WARN: The driver[#{driver.class.name}] config key `#{old_key}` " \
@@ -162,15 +167,28 @@ module Kitchen
       def finalize_config!(instance)
         super
 
-        if config[:availability_zone].nil?
-          config[:availability_zone] = config[:region] + "b"
-        elsif config[:availability_zone] =~ /^[a-z]$/
+        if config[:availability_zone] =~ /^[a-z]$/
           config[:availability_zone] = config[:region] + config[:availability_zone]
         end
-        # TODO: when we get rid of flavor_id, move this to a default
-        if config[:instance_type].nil?
-          config[:instance_type] = config[:flavor_id] || "t2.micro"
+
+        # Search for the AMI if it's not specified
+        if config[:image_id].nil?
+          platform = platform_from_string
+          if platform
+            if config[:image_search].nil?
+              config[:image_search] = platform.image_search
+
+            # If platform_string and image_search are both specified, they are merged together
+            # (with image_search winning).
+            elsif config[:platform_string]
+              config[:image_search] = platform.image_search.merge(config[:image_search])
+            end
+          end
+          config[:image_id] = platform.find_image(ec2, config[:image_search])
         end
+
+        config[:username] ||= platform_from_image.username if platform_from_image
+        config[:instance_type] ||= config[:flavor_id] || default_instance_type_for_image
 
         self
       end
@@ -251,37 +269,38 @@ module Kitchen
         state.delete(:hostname)
       end
 
-      def lookup_ami(filters_hash)
-        filters = []
-        filters_hash.each do |key, value|
-          filters.push(:name => key.to_s, :values => Array(value))
-        end
-        images = ec2.resource.images(:filters => filters).sort do |ami1, ami2|
-          Time.parse(ami1.creation_date) <=> Time.parse(ami2.creation_date)
-        end
-        images.last && images.last.id
+      def image
+        @image ||= ec2.resource.image(config[:image_id])
       end
 
-      def ubuntu_ami(region, platform_name)
-        release = amis["ubuntu_releases"][platform_name]
-        Ubuntu.release(release).amis.find do |ami|
-          ami.arch == "amd64" &&
-            ami.root_store == "ebs" &&
-            ami.region == region &&
-            ami.virtualization_type == "hvm"
+      def default_instance_type_for_image
+        # We default to the free tier (t2.micro for hvm, t1.micro for paravirtual)
+        image.virtualization_type == "hvm" ? "t2.micro" : "t1.micro"
+      end
+
+      def platform_from_image
+        @platform_from_image ||= Aws::Platform.from_image(ec2, image)
+      end
+
+      def platform_from_string
+        if config[:platform_string].nil?
+          platform = Aws::Platform.from_platform_string(ec2, instance.platform.name)
+          if platform
+            debug("platform name #{instance.platform.name} appears to be a standard platform. Searching for #{platform} ...")
+          else
+            debug("platform name #{instance.platform.name} does not have a valid os. Searching for latest stable ubuntu ...")
+            platform = Aws::Platform.from_platform_string(ec2, "ubuntu")
+          end
+        else
+          platform = Aws::Platform.from_platform_string(ec2, config[:platform_string])
+          debug("platform_string is #{config[:platform_string]}. Searching for an image with platform #{platform} ...")
         end
+        platform
       end
 
       def default_ami
-        if instance.platform.name.start_with?("ubuntu")
-          ami = ubuntu_ami(config[:region], instance.platform.name)
-          ami && ami.name
-        elsif !config[:image_search].nil?
-          lookup_ami(config[:image_search])
-        else
-          region = amis["regions"][config[:region]]
-          region && region[instance.platform.name]
-        end
+        platform = platform_from_string
+        platform.find_image(ec2, config[:image_search]) if platform
       end
 
       def ec2
@@ -314,9 +333,7 @@ module Kitchen
         if config[:username]
           state[:username] = config[:username]
         elsif instance.transport[:username] == instance.transport.class.defaults[:username]
-          # If the transport has the default username, copy it from amis.json
-          # This duplicated old behavior but I hate amis.json
-          ami_username = amis["usernames"][instance.platform.name]
+          ami_username = platform_from_image.username if platform
           state[:username] = ami_username if ami_username
         end
         if config[:ssh_key]
@@ -429,14 +446,6 @@ module Kitchen
         info("Retrieved Windows password for instance <#{state[:server_id]}>.")
       end
       # rubocop:enable Lint/UnusedBlockArgument
-
-      def amis
-        @amis ||= begin
-          json_file = File.join(File.dirname(__FILE__),
-            %w[.. .. .. data amis.json])
-          JSON.load(IO.read(json_file))
-        end
-      end
 
       #
       # Ordered mapping from config name to Fog name.  Ordered by preference
