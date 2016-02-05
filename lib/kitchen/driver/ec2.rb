@@ -65,7 +65,7 @@ module Kitchen
       default_config :duration,           nil
       default_config :retryable_tries,    60
       default_config :retryable_sleep,    5
-      default_config :aws_access_key_id,  ENV["AWS_ACCESS_KEY_ID"]
+      default_config :aws_access_key_id,  nil
       default_config :aws_secret_access_key, nil
       default_config :aws_session_token,  nil
       default_config :aws_ssh_key_id,     ENV["AWS_SSH_KEY_ID"]
