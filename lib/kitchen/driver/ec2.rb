@@ -62,6 +62,7 @@ module Kitchen
       default_config :private_ip_address, nil
       default_config :iam_profile_name,   nil
       default_config :price,              nil
+      default_config :duration,           nil
       default_config :retryable_tries,    60
       default_config :retryable_sleep,    5
       default_config :aws_access_key_id,  ENV["AWS_ACCESS_KEY_ID"]
@@ -356,6 +357,7 @@ module Kitchen
         request_data = {}
         request_data[:spot_price] = config[:price].to_s
         request_data[:launch_specification] = instance_generator.ec2_instance_data
+        request_data[:block_duration_minutes] = config[:duration] if config[:duration]
 
         response = ec2.client.request_spot_instances(request_data)
         spot_request_id = response[:spot_instance_requests][0][:spot_instance_request_id]
